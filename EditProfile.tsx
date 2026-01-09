@@ -113,3 +113,4 @@ const EditProfile: React.FC<EditProfileProps> = ({ onBack, user }) => {
 };
 
 export default EditProfile;
+
