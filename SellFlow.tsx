@@ -9,41 +9,72 @@ interface SellFlowProps {
   category: Category | null;
   onSelectCategory: (cat: Category | null) => void;
   onCancel: () => void;
+  onSuccess: () => void;
+  session: any;
+  isDemoMode: boolean;
 }
 
-const SellFlow: React.FC<SellFlowProps> = ({ category, onSelectCategory, onCancel }) => {
-  if (category === 'clothing') {
-    return <ClothingListingForm onBack={() => onSelectCategory(null)} />;
+const SellFlow: React.FC<SellFlowProps> = ({ 
+  category, 
+  onSelectCategory, 
+  onCancel, 
+  onSuccess,
+  session,
+  isDemoMode 
+}) => {
+  if (category === 'Clothing') {
+    return (
+      <ClothingListingForm 
+        onBack={() => onSelectCategory(null)} 
+        onSuccess={onSuccess}
+        session={session}
+        isDemoMode={isDemoMode}
+      />
+    );
   }
 
-  if (category === 'furniture') {
-    return <FurnitureListingForm onBack={() => onSelectCategory(null)} />;
+  if (category === 'Furniture') {
+    return (
+      <FurnitureListingForm 
+        onBack={() => onSelectCategory(null)} 
+        onSuccess={onSuccess}
+        session={session}
+        isDemoMode={isDemoMode}
+      />
+    );
   }
 
-  if (category === 'electronics') {
-    return <ElectronicsListingForm onBack={() => onSelectCategory(null)} />;
+  if (category === 'Electronics') {
+    return (
+      <ElectronicsListingForm 
+        onBack={() => onSelectCategory(null)} 
+        onSuccess={onSuccess}
+        session={session}
+        isDemoMode={isDemoMode}
+      />
+    );
   }
 
   return (
     <div className="h-full bg-orange-600 flex flex-col">
       {/* Header */}
-      <div className="p-6 flex items-start space-x-4">
-        <button onClick={onCancel} className="bg-white/20 p-2 rounded-full text-white">
+      <div className="p-6 pt-14 flex items-start space-x-4">
+        <button onClick={onCancel} className="bg-white/20 p-2 rounded-full text-white active:scale-95 transition-transform">
           <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
           </svg>
         </button>
         <div>
-          <h1 className="text-white text-xl font-semibold leading-tight">What are you selling?</h1>
+          <h1 className="text-white text-xl font-bold leading-tight">What are you selling?</h1>
           <p className="text-white/80 text-sm">Choose a category to get started</p>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 bg-orange-600 p-6 space-y-4">
+      <div className="flex-1 bg-orange-600 p-6 space-y-4 pb-32 overflow-y-auto no-scrollbar">
         <button 
-          onClick={() => onSelectCategory('clothing')}
-          className="w-full bg-white rounded-3xl p-6 flex items-center justify-between text-left transition-transform active:scale-[0.98]"
+          onClick={() => onSelectCategory('Clothing')}
+          className="w-full bg-white rounded-3xl p-6 flex items-center justify-between text-left transition-transform active:scale-[0.98] shadow-lg"
         >
           <div className="flex items-center space-x-4">
             <div className="w-16 h-16 bg-orange-500 rounded-2xl flex items-center justify-center text-white">
@@ -63,8 +94,8 @@ const SellFlow: React.FC<SellFlowProps> = ({ category, onSelectCategory, onCance
         </button>
 
         <button 
-          onClick={() => onSelectCategory('furniture')}
-          className="w-full bg-white rounded-3xl p-6 flex items-center justify-between text-left transition-transform active:scale-[0.98]"
+          onClick={() => onSelectCategory('Furniture')}
+          className="w-full bg-white rounded-3xl p-6 flex items-center justify-between text-left transition-transform active:scale-[0.98] shadow-lg"
         >
           <div className="flex items-center space-x-4">
             <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center text-white">
@@ -83,8 +114,8 @@ const SellFlow: React.FC<SellFlowProps> = ({ category, onSelectCategory, onCance
         </button>
 
         <button 
-          onClick={() => onSelectCategory('electronics')}
-          className="w-full bg-white rounded-3xl p-6 flex items-center justify-between text-left transition-transform active:scale-[0.98]"
+          onClick={() => onSelectCategory('Electronics')}
+          className="w-full bg-white rounded-3xl p-6 flex items-center justify-between text-left transition-transform active:scale-[0.98] shadow-lg"
         >
           <div className="flex items-center space-x-4">
             <div className="w-16 h-16 bg-purple-600 rounded-2xl flex items-center justify-center text-white">
