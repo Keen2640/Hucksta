@@ -1,15 +1,20 @@
 
-export type Category = 'clothing' | 'furniture' | 'electronics';
+export type Category = 'Clothing' | 'Furniture' | 'Electronics';
 
 export interface Listing {
   id: string;
   title: string;
+  brand?: string;
+  size?: string;
+  gender?: 'Mens' | 'Womens' | 'Unisex';
   price: number;
+  condition: string;
   category: Category;
-  imageUrl: string;
-  views: number;
-  status: 'active' | 'sold';
-  createdAt: string;
+  location: string;
+  description?: string;
+  image_url: string;
+  seller_id: string;
+  created_at: string;
 }
 
 export interface User {
