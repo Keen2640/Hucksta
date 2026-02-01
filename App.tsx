@@ -8,21 +8,22 @@ import Marketplace from './components/Marketplace';
 import Messages from './components/Messages';
 import ItemDetail from './components/ItemDetail';
 import Login from './components/Login';
+import ForgotPassword from './components/ForgotPassword';
+import ResetPasswordForm from './components/ResetPasswordForm';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>(Tab.HOME);
+  const [view, setView] = useState<'main' | 'forgot_password' | 'reset_password'>('main');
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [viewingItem, setViewingItem] = useState<any>(null);
-  // If set, Messages will open that conversation directly
   const [openConversationId, setOpenConversationId] = useState<string | null>(null);
-  const [isDemoMode, setIsDemoMode] = useState(!isSupabaseConfigured);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [showNotification, setShowNotification] = useState(false);
-  const [notificationKey, setNotificationKey] = useState(0);
-  const [lastNotificationText, setLastNotificationText] = useState('');
+  const [userAvatar, setUserAvatar] = useState<string | undefined>(undefined);
+
+  const GENERIC_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='35' fill='white'/%3E%3Crect x='2' y='2' width='96' height='96' rx='34' fill='none' stroke='%23FF8C42' stroke-width='1.5' stroke-opacity='0.2'/%3E%3Ccircle cx='50' cy='44' r='18' fill='%23B0B0B0'/%3E%3Cpath d='M22 86c0-15 12-25 28-25s28 10 28 25v4H22v-4z' fill='%23B0B0B0'/%3E%3C/svg%3E";
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -32,33 +33,29 @@ const App: React.FC = () => {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      if (session?.user) ensureProfileExists(session.user);
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
-      if (session) setIsDemoMode(false);
-      else setIsDemoMode(!isSupabaseConfigured);
+      if (event === 'PASSWORD_RECOVERY') setView('reset_password');
+      if (session?.user) {
+        ensureProfileExists(session.user);
+      } else {
+        setUserAvatar(undefined);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const triggerNotification = useCallback((text: string) => {
-    setLastNotificationText(text);
-    setUnreadCount(prev => prev + 1);
-    setNotificationKey(prev => prev + 1);
-    setShowNotification(true);
-    // Hide notification after 4 seconds
-    setTimeout(() => setShowNotification(false), 4000);
-  }, []);
-
-  // Global message listener for notifications and unread badge
+  // Global Notification Listener - Only updates unread count now
   useEffect(() => {
-    if (!session?.user?.id || isDemoMode) return;
+    if (!session?.user?.id || !isSupabaseConfigured) return;
 
-    const channel = supabase
-      .channel('global-notifications')
+    const messageListener = supabase
+      .channel('global-messages')
       .on('postgres_changes', { 
         event: 'INSERT', 
         schema: 'public', 
@@ -66,86 +63,77 @@ const App: React.FC = () => {
       }, async (payload) => {
         const newMessage = payload.new;
         
-        // Only notify if someone else sent the message
-        if (newMessage.sender_id !== session.user.id) {
-          // Check if the message belongs to a conversation the current user is part of
-          const { data: conv } = await supabase
-            .from('conversations')
-            .select('id, buyer_id, seller_id')
-            .eq('id', newMessage.conversation_id)
-            .single();
+        // Don't notify if I sent it
+        if (newMessage.sender_id === session.user.id) return;
+        
+        // Don't notify if I'm already looking at this exact chat
+        if (activeTab === Tab.MESSAGES && openConversationId === newMessage.conversation_id) return;
 
-          if (conv && (conv.buyer_id === session.user.id || conv.seller_id === session.user.id)) {
-            // Only trigger visual notification if the user isn't currently looking at the inbox
-            if (activeTab !== Tab.MESSAGES) {
-              triggerNotification(newMessage.text);
-            }
-          }
-        }
+        // Simply increment unread count for the navigation red dot
+        setUnreadCount(prev => prev + 1);
       })
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(messageListener);
     };
-  }, [session?.user?.id, activeTab, isDemoMode, triggerNotification]);
+  }, [session?.user?.id, activeTab, openConversationId]);
 
-  useEffect(() => {
-    // Clear unread badge when entering messages tab
-    if (activeTab === Tab.MESSAGES) {
-      setUnreadCount(0);
-      setShowNotification(false);
+  const ensureProfileExists = async (user: any) => {
+    try {
+      const { data: profile } = await supabase.from('profiles').select('avatar_url').eq('id', user.id).maybeSingle();
+      if (!profile) {
+        const fullName = user.user_metadata?.full_name || user.email?.split('@')[0] || 'New Comet';
+        const username = user.user_metadata?.username || user.email?.split('@')[0]?.toLowerCase().replace(/[^a-z0-9]/g, '') || `user${user.id.slice(0, 4)}`;
+        
+        await supabase.from('profiles').upsert({
+          id: user.id,
+          full_name: fullName,
+          username: username,
+          avatar_url: GENERIC_AVATAR,
+          updated_at: new Date().toISOString()
+        });
+        setUserAvatar(GENERIC_AVATAR);
+      } else {
+        setUserAvatar(profile.avatar_url || GENERIC_AVATAR);
+      }
+    } catch (err) {
+      console.error('Profile sync error:', err);
     }
-  }, [activeTab]);
+  };
 
-  const handleDemoLogin = () => {
-    setIsDemoMode(true);
-    setSession({ user: { email: 'demo@utdallas.edu', id: 'demo-user' } });
+  const handleTabChange = (tab: Tab) => {
+    setActiveTab(tab);
+    setViewingItem(null);
+    setOpenConversationId(null);
+    if (tab === Tab.MESSAGES) setUnreadCount(0);
+    if (tab !== Tab.SELL) setSelectedCategory(null);
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="flex flex-col items-center space-y-4">
-          <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-orange-600 font-bold animate-pulse tracking-tighter text-xl">Hucksta</p>
-        </div>
+      <div className="h-screen w-full flex items-center justify-center bg-white">
+        <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
   }
 
+  if (view === 'reset_password') return <ResetPasswordForm onComplete={() => setView('main')} />;
   if (!session) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-white shadow-2xl rounded-[3rem] overflow-hidden min-h-[852px]">
-          <Login onLogin={handleDemoLogin} />
-          {!isSupabaseConfigured && (
-            <div className="px-8 pb-8 -mt-8 text-center">
-              <p className="text-[10px] text-gray-400 mb-2 italic">Backend not connected yet.</p>
-              <button 
-                onClick={handleDemoLogin}
-                className="text-xs font-bold text-orange-600 underline"
-              >
-                Enter Demo Mode (No Setup Required)
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
+    if (view === 'forgot_password') return <ForgotPassword onBack={() => setView('main')} onVerified={() => setView('reset_password')} />;
+    return <Login onForgotPassword={() => setView('forgot_password')} />;
   }
 
   const renderContent = () => {
     if (viewingItem) {
-        return (
+      return (
         <ItemDetail 
           item={viewingItem} 
           session={session}
-          isDemoMode={isDemoMode}
-          onBack={() => setViewingItem(null)} 
-          onMessage={(conversationId?: string | null) => {
+          onBack={() => setViewingItem(null)}
+          onMessage={(convId) => {
             setViewingItem(null);
-            setOpenConversationId(conversationId || null);
+            setOpenConversationId(convId || null);
             setActiveTab(Tab.MESSAGES);
           }}
         />
@@ -153,86 +141,34 @@ const App: React.FC = () => {
     }
 
     switch (activeTab) {
-      case Tab.HOME:
-        return <Marketplace onSelectItem={setViewingItem} />;
-      case Tab.MESSAGES:
-        return <Messages session={session} isDemoMode={isDemoMode} initialConversationId={openConversationId} />;
+      case Tab.HOME: return <Marketplace session={session} onSelectItem={setViewingItem} />;
+      case Tab.MESSAGES: return <Messages session={session} initialConversationId={openConversationId} />;
       case Tab.SELL:
         return (
           <SellFlow 
-            category={selectedCategory} 
-            onSelectCategory={setSelectedCategory} 
+            category={selectedCategory}
+            onSelectCategory={setSelectedCategory}
+            onCancel={() => handleTabChange(Tab.HOME)}
+            onSuccess={() => handleTabChange(Tab.HOME)}
             session={session}
-            isDemoMode={isDemoMode}
-            onCancel={() => {
-              setSelectedCategory(null);
-              setActiveTab(Tab.HOME);
-            }}
-            onSuccess={() => {
-              setSelectedCategory(null);
-              setActiveTab(Tab.HOME);
-            }}
           />
         );
-      case Tab.PROFILE:
-        return (
-          <Profile 
-            session={session} 
-            onSelectItem={setViewingItem} 
-          />
-        );
-      default:
-        return <Marketplace onSelectItem={setViewingItem} />;
+      case Tab.PROFILE: return <Profile session={session} onSelectItem={setViewingItem} onGoHome={() => handleTabChange(Tab.HOME)} />;
+      default: return null;
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-md mx-auto relative h-screen bg-white shadow-xl overflow-hidden flex flex-col">
-        
-        {/* Animated Visual Notification Toast */}
-        {showNotification && (
-          <div 
-            key={notificationKey}
-            onClick={() => setActiveTab(Tab.MESSAGES)}
-            className="absolute top-16 left-0 right-0 z-[100] px-4 cursor-pointer animate-envelope-pop"
-          >
-            <div className="bg-white border-2 border-black p-4 rounded-[2.5rem] shadow-2xl flex items-center space-x-5">
-              <div className="relative flex-shrink-0">
-                <div className="w-14 h-10 border-[2.5px] border-black rounded-sm relative flex items-center justify-center bg-white">
-                  <div className="absolute top-0 w-full h-[60%] border-b-[2.5px] border-black transform origin-top translate-y-[-1px]" style={{ clipPath: 'polygon(0 0, 100% 0, 50% 100%)' }}></div>
-                  <div className="absolute bottom-0 w-full h-[60%] border-t border-gray-100 bg-white" style={{ clipPath: 'polygon(0 100%, 100% 100%, 50% 0)' }}></div>
-                </div>
-                <div className="absolute -top-3 -right-3 w-8 h-8 bg-[#E53935] rounded-full border-[3px] border-white flex items-center justify-center shadow-lg animate-in zoom-in duration-300">
-                  <span className="text-white text-xs font-black">1</span>
-                </div>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <p className="text-[10px] font-black uppercase tracking-widest text-orange-600 mb-0.5">New Message</p>
-                <p className="text-sm font-bold text-gray-900 truncate leading-tight">
-                  {lastNotificationText}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="flex-1 overflow-hidden">
-          <div className="h-full w-full overflow-y-auto no-scrollbar">
-            {renderContent()}
-          </div>
-        </div>
-        
+    <div className="h-screen w-full max-md:max-w-md mx-auto bg-white relative shadow-2xl overflow-hidden flex flex-col">
+      <div className="flex-1 relative overflow-hidden">{renderContent()}</div>
+      {!viewingItem && (
         <Navigation 
           activeTab={activeTab} 
           unreadCount={unreadCount}
-          onTabChange={(tab) => {
-            setActiveTab(tab);
-            if (tab !== Tab.SELL) setSelectedCategory(null);
-            setViewingItem(null);
-          }} 
+          userAvatar={userAvatar}
+          onTabChange={handleTabChange} 
         />
-      </div>
+      )}
     </div>
   );
 };
