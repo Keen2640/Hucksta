@@ -3,10 +3,10 @@ import React, { useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface LoginProps {
-  onLogin: () => void;
+  onForgotPassword?: () => void;
 }
 
-const Login: React.FC<LoginProps> = ({ onLogin }) => {
+const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -18,7 +18,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     e.preventDefault();
     
     if (!isSupabaseConfigured) {
-      onLogin(); 
+      setError("Marketplace configuration missing.");
       return;
     }
 
@@ -50,15 +50,9 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   return (
     <div className="h-full bg-white flex flex-col px-8 py-16 animate-in fade-in duration-500 relative overflow-hidden">
       <div className="flex flex-col items-center justify-center mt-12 mb-10 text-center">
-        <h1 className="text-6xl font-black text-[#FF8C42] tracking-tighter mb-8">
+        <h1 className="text-6xl font-[900] text-[#FF733B] tracking-tighter mb-12 leading-none">
           Hucksta
         </h1>
-        <div className="space-y-1">
-          <h2 className="text-[#FF8C42] text-xl font-bold tracking-tight">
-            {isSignUp ? 'Create your account' : 'Welcome back'}
-          </h2>
-          <p className="text-[#FFB380] text-sm font-medium">Built for the UTD Community</p>
-        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -70,7 +64,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               onChange={(e) => setFullName(e.target.value)}
               placeholder="Full Name"
               required
-              className="w-full h-14 px-6 bg-gray-50 rounded-xl text-gray-800 border border-gray-100 outline-none focus:bg-white focus:ring-2 focus:ring-orange-200 transition-all placeholder-gray-300"
+              className="w-full h-14 px-6 bg-[#F6F7F9] rounded-2xl text-gray-800 border-2 border-transparent outline-none focus:bg-white focus:border-[#FF733B] transition-all placeholder-gray-300 font-bold"
             />
           )}
           <input
@@ -79,7 +73,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="Email"
             required
-            className="w-full h-14 px-6 bg-gray-50 rounded-xl text-gray-800 border border-gray-100 outline-none focus:bg-white focus:ring-2 focus:ring-orange-200 transition-all placeholder-gray-300"
+            className="w-full h-14 px-6 bg-[#F6F7F9] rounded-2xl text-gray-800 border-2 border-transparent outline-none focus:bg-white focus:border-[#FF733B] transition-all placeholder-gray-300 font-bold"
           />
           <input
             type="password"
@@ -87,47 +81,42 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Password"
             required
-            className="w-full h-14 px-6 bg-gray-50 rounded-xl text-gray-800 border border-gray-100 outline-none focus:bg-white focus:ring-2 focus:ring-orange-200 transition-all placeholder-gray-300"
+            className="w-full h-14 px-6 bg-[#F6F7F9] rounded-2xl text-gray-800 border-2 border-transparent outline-none focus:bg-white focus:border-[#FF733B] transition-all placeholder-gray-300 font-bold"
           />
         </div>
         
         {error && <p className="text-xs text-red-500 px-1 font-medium">{error}</p>}
 
+        <div className="flex justify-end px-1">
+          <button 
+            type="button"
+            onClick={onForgotPassword}
+            className="text-[10px] font-black uppercase tracking-widest text-[#FF733B] hover:text-orange-700 transition-colors"
+          >
+            Forgot Password?
+          </button>
+        </div>
+
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full h-14 bg-[#FF8C42] text-white font-bold rounded-xl active:scale-[0.98] transition-all hover:bg-[#e67a35] shadow-lg shadow-orange-100 disabled:opacity-50"
+          className="w-full h-16 bg-[#FF733B] text-white font-black uppercase tracking-[0.15em] text-xs rounded-[2rem] active:scale-[0.98] transition-all shadow-xl shadow-orange-100/30 disabled:opacity-50 mt-4"
         >
-          {isLoading ? 'Processing...' : isSignUp ? 'Create Account' : 'Continue'}
+          {isLoading ? (
+            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto"></div>
+          ) : (
+            isSignUp ? 'Create Account' : 'Continue'
+          )}
         </button>
       </form>
 
-      <div className="mt-4 text-center">
+      <div className="mt-8 text-center">
         <button 
           onClick={() => setIsSignUp(!isSignUp)}
-          className="text-xs font-bold text-orange-600 hover:underline"
+          className="text-[11px] font-black uppercase tracking-widest text-[#FF733B] hover:underline"
         >
           {isSignUp ? 'Already have an account? Log in' : "Don't have an account? Sign up"}
         </button>
-      </div>
-
-      <div className="flex items-center my-6">
-        <div className="flex-1 h-[1px] bg-gray-100"></div>
-        <span className="px-4 text-sm font-medium text-gray-400">or</span>
-        <div className="flex-1 h-[1px] bg-gray-100"></div>
-      </div>
-
-      <button 
-        onClick={onLogin}
-        className="w-full h-14 bg-[#F2F2F2] flex items-center justify-center space-x-3 rounded-xl active:scale-[0.98] transition-all"
-      >
-        <span className="text-[#FF8C42] font-bold text-sm">Continue as Guest</span>
-      </button>
-
-      <div className="mt-auto mb-4 text-center">
-        <p className="text-[11px] text-gray-400 leading-relaxed max-w-[280px] mx-auto">
-          Secure campus marketplace for Comets
-        </p>
       </div>
     </div>
   );
