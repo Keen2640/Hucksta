@@ -1,12 +1,11 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 
 interface ElectronicsListingFormProps {
   onBack: () => void;
   onSuccess?: () => void;
   session: any;
-  isDemoMode: boolean;
 }
 
 const locations = [
@@ -17,39 +16,47 @@ const locations = [
   'Naveen Jindal School of Management', 'McDermott Library', 'Student Union'
 ];
 
-const ElectronicsListingForm: React.FC<ElectronicsListingFormProps> = ({ 
-  onBack, 
-  onSuccess, 
-  session, 
-  isDemoMode 
-}) => {
+const ElectronicsListingForm: React.FC<ElectronicsListingFormProps> = ({ onBack, onSuccess, session }) => {
   const [itemName, setItemName] = useState('');
   const [brand, setBrand] = useState('');
   const [condition, setCondition] = useState('Like New');
   const [price, setPrice] = useState('');
   const [location, setLocation] = useState(locations[0]);
+  const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [description, setDescription] = useState('');
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [photos, setPhotos] = useState<{file: File, preview: string}[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   
   const conditions = ['New', 'Like New', 'Excellent', 'Good', 'Fair'];
   const MAX_PHOTOS = 10;
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsLocationOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []) as File[];
     if (photos.length + files.length > MAX_PHOTOS) {
       alert(`You can only upload up to ${MAX_PHOTOS} photos.`);
       return;
     }
-
+    
     files.forEach(file => {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setPhotos(prev => [...prev, reader.result as string].slice(0, MAX_PHOTOS));
+        setPhotos(prev => [...prev, { file, preview: reader.result as string }].slice(0, MAX_PHOTOS));
       };
-      reader.readAsDataURL(file as any);
+      reader.readAsDataURL(file);
     });
+    
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -58,40 +65,65 @@ const ElectronicsListingForm: React.FC<ElectronicsListingFormProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (!itemName || !price || photos.length === 0) {
-      return alert(photos.length === 0 ? 'Please upload at least one photo' : 'Please fill in required fields');
-    }
+    if (!itemName.trim()) return alert('Please enter an item name');
     
-    if (isDemoMode) {
-      alert('You are in Demo/Guest mode! Please sign up with a real account to save items to the cloud.');
-      return;
+    const parsedPrice = parseFloat(price.replace(/[^0-9.]/g, ''));
+    if (isNaN(parsedPrice) || parsedPrice <= 0) {
+      return alert('Please enter a valid price (numbers only)');
+    }
+
+    if (photos.length === 0) {
+      return alert('Please upload at least one photo');
     }
 
     setIsSubmitting(true);
 
     try {
-      const imageUrlData = photos.length > 1 ? JSON.stringify(photos) : photos[0];
+      const uploadedUrls: string[] = [];
 
+      for (const photo of photos) {
+        const fileExt = photo.file.name.split('.').pop();
+        const fileName = `${session.user.id}-${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`;
+        const filePath = `${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('listings')
+          .upload(filePath, photo.file);
+
+        if (uploadError) {
+          throw new Error(`[Storage Error] ${uploadError.message}`);
+        }
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('listings')
+          .getPublicUrl(filePath);
+
+        uploadedUrls.push(publicUrl);
+      }
+
+      const imageUrlData = uploadedUrls.length > 1 ? JSON.stringify(uploadedUrls) : uploadedUrls[0];
       const { error } = await supabase.from('listings').insert([
         {
-          title: itemName,
-          brand,
-          price: parseFloat(price),
+          title: itemName.trim(),
+          brand: brand.trim(),
+          price: parsedPrice,
           condition,
           category: 'Electronics',
           location,
-          description,
+          description: description.trim(),
           seller_id: session?.user?.id,
           image_url: imageUrlData
         }
       ]);
 
-      if (error) throw error;
-      alert('Item posted successfully!');
+      if (error) {
+        throw new Error(`[Database Error] ${error.message}`);
+      }
+
+      alert('Electronics listed successfully!');
       onSuccess?.();
     } catch (err: any) {
-      console.error('Submit Error:', err);
-      alert(err.message || 'Something went wrong.');
+      alert(`Submission Failed:\n\n${err.message}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -117,14 +149,13 @@ const ElectronicsListingForm: React.FC<ElectronicsListingFormProps> = ({
             <span>Photos *</span>
             <span>{photos.length}/{MAX_PHOTOS}</span>
           </label>
-          
-          <div className="flex space-x-3 overflow-x-auto no-scrollbar pb-2">
+          <div className="flex space-x-3 overflow-x-auto no-scrollbar pt-4 pb-2">
             {photos.map((photo, idx) => (
               <div key={idx} className="relative flex-shrink-0">
-                <img src={photo} className="w-28 h-28 rounded-3xl object-cover border border-gray-100 shadow-sm" alt="Preview" />
+                <img src={photo.preview} className="w-28 h-28 rounded-3xl object-cover border border-gray-100 shadow-sm" alt="Preview" />
                 <button 
                   onClick={() => removePhoto(idx)}
-                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg border-2 border-white active:scale-90 transition-transform"
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg border-2 border-white active:scale-90 transition-transform z-10"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
@@ -132,7 +163,6 @@ const ElectronicsListingForm: React.FC<ElectronicsListingFormProps> = ({
                 </button>
               </div>
             ))}
-            
             {photos.length < MAX_PHOTOS && (
               <button 
                 onClick={() => fileInputRef.current?.click()}
@@ -151,87 +181,72 @@ const ElectronicsListingForm: React.FC<ElectronicsListingFormProps> = ({
         </div>
 
         <div className="space-y-5">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Item Name *</label>
-              <input 
-                type="text" 
-                value={itemName}
-                onChange={(e) => setItemName(e.target.value)}
-                placeholder="MacBook Pro" 
-                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none text-sm font-bold" 
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Brand/Manufacturer</label>
-              <input 
-                type="text" 
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-                placeholder="Apple, Dell, Sony" 
-                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none text-sm font-bold" 
-              />
-            </div>
+          <div className="space-y-1">
+            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Brand</label>
+            <input type="text" value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="Apple, Dell, Sony, Nintendo" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none text-sm font-bold" />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Price ($) *</label>
-              <input 
-                type="number" 
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder="0.00" 
-                className="w-full h-14 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none px-4 text-sm font-bold" 
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Pickup *</label>
-              <select 
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-purple-500 appearance-none outline-none text-sm font-bold"
-              >
-                {locations.map(loc => <option key={loc} value={loc}>{loc}</option>)}
-              </select>
-            </div>
+          <div className="space-y-1">
+            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Item Name *</label>
+            <input type="text" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="MacBook Pro" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none text-sm font-bold" />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Price ($) *</label>
+            <input type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" className="w-full h-14 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none px-4 text-sm font-bold" />
+          </div>
+          
+          <div className="space-y-1 relative" ref={dropdownRef}>
+            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Pickup *</label>
+            <button 
+              type="button"
+              onClick={() => setIsLocationOpen(!isLocationOpen)}
+              className={`w-full h-14 bg-gray-50 border rounded-2xl flex justify-between items-center transition-all ${isLocationOpen ? 'border-purple-500 bg-white ring-4 ring-purple-50' : 'border-gray-100'}`}
+            >
+              <span className="text-sm font-bold text-gray-900 truncate pr-2 pl-4">{location}</span>
+              <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 text-purple-500 transition-transform shrink-0 mr-4 ${isLocationOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            
+            {isLocationOpen && (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-3xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="max-h-60 overflow-y-auto no-scrollbar py-2">
+                  {locations.map((loc) => (
+                    <button
+                      key={loc}
+                      type="button"
+                      onClick={() => {
+                        setLocation(loc);
+                        setIsLocationOpen(false);
+                      }}
+                      className={`w-full px-6 py-4 text-left text-sm font-bold transition-all ${location === loc ? 'text-purple-600 bg-purple-50' : 'text-gray-600 hover:bg-gray-50'}`}
+                    >
+                      {loc}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
             <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Description</label>
-            <textarea 
-              rows={4}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Specs, battery life, condition details..." 
-              className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none resize-none text-sm font-medium leading-relaxed"
-            />
+            <textarea rows={4} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Specs, battery life, condition details..." className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-purple-500 outline-none resize-none text-sm font-medium leading-relaxed" />
           </div>
 
           <div className="space-y-2">
             <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Condition *</label>
             <div className="flex flex-wrap gap-2">
               {conditions.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setCondition(c)}
-                  className={`px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${condition === c ? 'bg-purple-600 text-white shadow-lg shadow-purple-100 scale-105' : 'bg-gray-50 text-gray-400 border border-gray-100'}`}
-                >
-                  {c}
-                </button>
+                <button key={c} onClick={() => setCondition(c)} className={`px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${condition === c ? 'bg-purple-600 text-white shadow-lg shadow-purple-100 scale-105' : 'bg-gray-50 text-gray-400 border border-gray-100'}`}>{c}</button>
               ))}
             </div>
           </div>
         </div>
 
-        <button 
-          onClick={handleSubmit}
-          disabled={isSubmitting}
-          className={`w-full text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-[0.98] transition-all uppercase tracking-widest text-sm mt-4 ${
-            isDemoMode ? 'bg-gray-400 cursor-not-allowed' : 'bg-purple-600 shadow-purple-100 hover:bg-purple-700'
-          }`}
-        >
-          {isSubmitting ? 'Posting...' : isDemoMode ? 'Sign in to Post' : 'Post Electronics'}
+        <button onClick={handleSubmit} disabled={isSubmitting} className="w-full text-white font-black py-5 rounded-[2rem] shadow-xl active:scale-[0.98] transition-all uppercase tracking-widest text-sm mt-4 bg-purple-600 shadow-purple-100 hover:bg-purple-700 disabled:opacity-50">
+          {isSubmitting ? 'Syncing to Campus...' : 'Post Tech Item'}
         </button>
       </div>
     </div>
@@ -239,4 +254,3 @@ const ElectronicsListingForm: React.FC<ElectronicsListingFormProps> = ({
 };
 
 export default ElectronicsListingForm;
-
