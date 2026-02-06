@@ -6,273 +6,170 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase';
 interface ProfileProps {
   session: any;
   onSelectItem?: (item: any) => void;
+  onGoHome?: () => void;
 }
 
-const Profile: React.FC<ProfileProps> = ({ session, onSelectItem }) => {
-  const [activeTab, setActiveTab] = useState<'active' | 'sold' | 'favorites'>('active');
+const Profile: React.FC<ProfileProps> = ({ session, onSelectItem, onGoHome }) => {
+  const [activeTab, setActiveTab] = useState<'active' | 'favorites'>('active');
   const [isEditing, setIsEditing] = useState(false);
   const [myListings, setMyListings] = useState<any[]>([]);
+  const [favoriteListings, setFavoriteListings] = useState<any[]>([]);
+  const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [errorType, setErrorType] = useState<'none' | 'table_missing' | 'other'>('none');
 
-  // Extract name from metadata or fallback to email parts
-  const fullName = session?.user?.user_metadata?.full_name || 
-                   (session?.user?.email?.split('@')[0] || 'Hucksta User');
-  
-  const [userData] = useState({
-    firstName: fullName.split(' ')[0],
-    lastName: fullName.split(' ').slice(1).join(' '),
-    username: session?.user?.email?.split('@')[0] || 'student',
-    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${session?.user?.id || 'default'}`
-  });
-
-  const isDemoUser = session?.user?.id === 'demo-user';
-
-  const setupSQL = `
--- Create the main listings table with all required fields
-create table if not exists public.listings (
-  id uuid default gen_random_uuid() primary key,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  title text not null,
-  brand text,
-  size text,
-  gender text,
-  price numeric not null,
-  condition text not null,
-  category text not null,
-  location text not null,
-  description text,
-  image_url text,
-  seller_id uuid not null default auth.uid()
-);
-
--- Enable Security
-alter table public.listings enable row level security;
-
--- Policies
-create policy "Anyone can view listings" on public.listings for select using (true);
-create policy "Users can add items" on public.listings for insert with check (auth.uid() = seller_id);
-create policy "Users can delete their items" on public.listings for delete using (auth.uid() = seller_id);
-  `.trim();
+  const GENERIC_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='35' fill='white'/%3E%3Crect x='2' y='2' width='96' height='96' rx='34' fill='none' stroke='%23FF8C42' stroke-width='1.5' stroke-opacity='0.2'/%3E%3Ccircle cx='50' cy='44' r='18' fill='%23B0B0B0'/%3E%3Cpath d='M22 86c0-15 12-25 28-25s28 10 28 25v4H22v-4z' fill='%23B0B0B0'/%3E%3C/svg%3E";
 
   useEffect(() => {
-    fetchMyListings();
-
-    if (isSupabaseConfigured && !isDemoUser) {
+    fetchAllData();
+    if (isSupabaseConfigured && session?.user?.id) {
       const channel = supabase
-        .channel('user-listing-updates')
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'listings',
-          filter: `seller_id=eq.${session?.user?.id}`
-        }, () => {
-          fetchMyListings();
-        })
+        .channel('profile-sync')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'listings' }, () => fetchMyListings())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'favorites' }, () => fetchFavorites())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchProfile())
         .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
+      return () => { supabase.removeChannel(channel); };
     }
   }, [session?.user?.id]);
 
+  const fetchAllData = async () => {
+    if (!isSupabaseConfigured || !session?.user?.id) return setLoading(false);
+    setLoading(true);
+    await Promise.all([fetchMyListings(), fetchFavorites(), fetchProfile()]);
+    setLoading(false);
+  };
+
+  const fetchProfile = async () => {
+    const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+    if (data) setProfile(data);
+  };
+
   const fetchMyListings = async () => {
-    // Prevent querying Supabase with the 'demo-user' string as it causes a UUID cast error
-    if (!isSupabaseConfigured || !session?.user?.id || isDemoUser) {
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from('listings')
-        .select('*')
-        .eq('seller_id', session.user.id)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        if (error.code === '42P01') setErrorType('table_missing');
-        else setErrorType('other');
-        throw error;
-      }
-      
-      if (data) {
-        setMyListings(data);
-        setErrorType('none');
-      }
-    } catch (err: any) {
-      console.error('Error fetching my listings:', err.message || err);
-    } finally {
-      setLoading(false);
-    }
+    const { data } = await supabase.from('listings').select('*').eq('seller_id', session.user.id).order('created_at', { ascending: false });
+    if (data) setMyListings(data);
   };
 
-  const handleLogout = async () => {
-    if (isSupabaseConfigured) {
-      await supabase.auth.signOut();
+  const fetchFavorites = async () => {
+    const { data: favs } = await supabase.from('favorites').select('listing_id').eq('user_id', session.user.id);
+    if (favs && favs.length > 0) {
+      const { data: items } = await supabase.from('listings').select('*').in('id', favs.map(f => f.listing_id));
+      setFavoriteListings(items || []);
     } else {
-      window.location.reload(); 
+      setFavoriteListings([]);
     }
   };
+
+  const handleLogout = async () => isSupabaseConfigured && await supabase.auth.signOut();
 
   const getThumbnail = (imageUrl: string) => {
     if (!imageUrl) return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&q=80&w=400';
-    try {
-      if (imageUrl.startsWith('[') && imageUrl.endsWith(']')) {
-        return JSON.parse(imageUrl)[0];
-      }
-      return imageUrl;
-    } catch (e) {
-      return imageUrl;
-    }
+    try { return imageUrl.startsWith('[') ? JSON.parse(imageUrl)[0] : imageUrl; } catch { return imageUrl; }
   };
 
-  if (isEditing) {
-    return (
-      <EditProfile 
-        user={userData} 
-        onBack={() => setIsEditing(false)} 
-      />
-    );
-  }
+  if (isEditing) return (
+    <EditProfile 
+      user={{ 
+        firstName: profile?.full_name?.split(' ')[0] || '', 
+        lastName: profile?.full_name?.split(' ').slice(1).join(' ') || '', 
+        username: profile?.username || '', 
+        avatar: profile?.avatar_url || GENERIC_AVATAR 
+      }} 
+      session={session} 
+      onBack={() => setIsEditing(false)} 
+    />
+  );
+
+  const displayName = profile?.full_name || session?.user?.email?.split('@')[0] || 'User';
+  const displayAvatar = profile?.avatar_url || GENERIC_AVATAR;
 
   return (
     <div className="h-full bg-white flex flex-col">
-      {/* Profile Header */}
-      <div className="relative h-64 bg-gradient-to-br from-orange-500 via-orange-600 to-emerald-600 p-6 flex flex-col justify-end">
+      <div className="relative h-64 bg-[#FF733B] p-8 flex flex-col justify-end overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-20 -mt-20 blur-3xl"></div>
+        <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-black/20 to-transparent"></div>
+        
         <button 
-          onClick={handleLogout}
-          className="absolute top-12 right-6 bg-white/20 p-2 rounded-xl text-white backdrop-blur-md hover:bg-white/30 transition-colors"
+          onClick={handleLogout} 
+          className="absolute top-12 right-6 bg-white/20 p-2.5 rounded-2xl text-white backdrop-blur-md active:scale-90 border border-white/10 z-20 transition-all hover:bg-white/30"
+          aria-label="Logout"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" xmlns="http://www.w3.org/2000/svg">
+            <path d="M10 2L3 4.5C2.4 4.7 2 5.2 2 5.8V18.2C2 18.8 2.4 19.3 3 19.5L10 22V2Z" />
+            <circle cx="7.5" cy="12" r="0.8" className="fill-white/80" />
+            <path d="M12 5H20V9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <path d="M12 19H20V15" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <path d="M12 12H21.5M21.5 12L18.5 9M21.5 12L18.5 15" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
           </svg>
         </button>
         
-        <div className="flex items-center space-x-4">
-          <div className="relative">
+        <div className="flex items-center space-x-5 relative z-10">
+          <div className="relative group cursor-pointer" onClick={() => setIsEditing(true)}>
             <img 
-              src={userData.avatar} 
-              alt={userData.firstName} 
-              className="w-24 h-24 rounded-3xl border-4 border-white object-cover shadow-lg bg-orange-100"
+              src={displayAvatar} 
+              className="w-20 h-20 rounded-[2rem] border-4 border-white/20 object-cover shadow-2xl group-hover:brightness-90 transition-all bg-white" 
+              alt="Profile" 
             />
+            <div className="absolute -bottom-1 -right-1 bg-white p-1.5 rounded-xl shadow-lg border border-gray-100 group-hover:scale-110 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-[#FF733B]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+            </div>
           </div>
           <div className="text-white">
-            <h2 className="text-2xl font-bold truncate max-w-[200px]">{fullName}</h2>
-            <p className="text-white/80 font-medium">@{userData.username}</p>
+            <h2 className="text-2xl font-black drop-shadow-sm">{displayName}</h2>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] bg-white text-[#FF733B] px-2 py-0.5 rounded-md inline-block backdrop-blur-sm shadow-sm mt-1">@{profile?.username || 'student'}</p>
           </div>
         </div>
       </div>
 
-      <div className="p-4 bg-gray-50 border-b border-gray-100 space-y-3">
-        <div className="flex items-center justify-between bg-white p-3 rounded-2xl shadow-sm">
-          <div className="flex items-center space-x-3">
-            <div className={`w-3 h-3 rounded-full ${isSupabaseConfigured && !isDemoUser ? 'bg-emerald-500 animate-pulse' : 'bg-orange-500'}`}></div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Connection</p>
-              <p className={`text-xs font-bold ${isSupabaseConfigured && !isDemoUser ? 'text-emerald-600' : 'text-orange-600'}`}>
-                {isDemoUser ? 'Guest Mode (Offline)' : isSupabaseConfigured ? 'Supabase Connected' : 'Offline'}
-              </p>
-            </div>
-          </div>
-          <div className="text-right">
-            <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Active Listings</p>
-            <p className="text-xs font-bold text-gray-800">{myListings.length}</p>
-          </div>
-        </div>
-      </div>
-
-      {errorType === 'table_missing' ? (
-        <div className="flex-1 p-6 flex flex-col justify-center">
-          <div className="bg-gray-50 rounded-[2.5rem] p-8 flex flex-col items-center text-center space-y-4">
-            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center text-orange-600">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-black text-gray-800">Database Setup Needed</h2>
-            <p className="text-xs text-gray-500 font-medium">To see your personal listings, run this script in Supabase:</p>
-            <div className="w-full">
-              <pre className="bg-gray-900 text-emerald-400 p-4 rounded-2xl text-[8px] overflow-x-auto whitespace-pre font-mono h-32 no-scrollbar border border-white/10 shadow-inner select-all">
-                {setupSQL}
-              </pre>
-            </div>
-            <button 
-              onClick={() => { setLoading(true); fetchMyListings(); }}
-              className="w-full bg-orange-600 text-white font-bold py-3 rounded-2xl active:scale-95 transition-all text-xs uppercase tracking-widest"
-            >
-              Verify Connection
-            </button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="flex border-b border-gray-100 px-2">
-            <button onClick={() => setActiveTab('active')} className={`flex-1 py-4 text-[11px] font-bold uppercase tracking-wider relative transition-colors ${activeTab === 'active' ? 'text-orange-600' : 'text-gray-400'}`}>
-              Active
-              {activeTab === 'active' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-orange-600 rounded-t-full"></div>}
-            </button>
-            <button onClick={() => setActiveTab('sold')} className={`flex-1 py-4 text-[11px] font-bold uppercase tracking-wider relative transition-colors ${activeTab === 'sold' ? 'text-orange-600' : 'text-gray-400'}`}>
-              Sold
-              {activeTab === 'sold' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-orange-600 rounded-t-full"></div>}
-            </button>
-            <button onClick={() => setActiveTab('favorites')} className={`flex-1 py-4 text-[11px] font-bold uppercase tracking-wider relative transition-colors ${activeTab === 'favorites' ? 'text-orange-600' : 'text-gray-400'}`}>
-              Favorites
-              {activeTab === 'favorites' && <div className="absolute bottom-0 left-0 right-0 h-1 bg-orange-600 rounded-t-full"></div>}
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto no-scrollbar p-4">
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-20 space-y-4">
-                <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-gray-400 text-[10px] font-bold uppercase tracking-widest">Loading Items...</p>
-              </div>
-            ) : activeTab === 'active' && myListings.length > 0 ? (
-              <div className="grid grid-cols-2 gap-3">
-                {myListings.map((item) => (
-                  <div 
-                    key={item.id} 
-                    onClick={() => onSelectItem?.(item)}
-                    className="bg-white rounded-[2rem] p-1.5 border border-gray-100 shadow-sm flex flex-col h-full transform active:scale-95 transition-transform cursor-pointer"
-                  >
-                    <div className="relative aspect-[4/5] rounded-[1.75rem] overflow-hidden mb-2">
-                      <img src={getThumbnail(item.image_url)} alt={item.title} className="w-full h-full object-cover" />
-                      <div className="absolute top-2 right-2 bg-white/90 backdrop-blur px-2 py-1 rounded-lg shadow-sm border border-gray-100">
-                        <span className="text-[10px] font-black text-orange-600">${Number(item.price).toFixed(2)}</span>
-                      </div>
-                    </div>
-                    <div className="px-2 pb-2">
-                      <h3 className="font-bold text-gray-800 text-[10px] leading-tight line-clamp-2 h-6 mb-1">{item.title}</h3>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-                <div className="bg-gray-50 p-6 rounded-[2.5rem] mb-6">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                  </svg>
-                </div>
-                <p className="font-bold text-sm text-gray-500">No {activeTab} items found</p>
-                <p className="text-[10px] text-gray-400 uppercase tracking-widest mt-1">
-                  {isDemoUser ? 'Sign in to start listing items!' : 'Start by listing something for sale!'}
-                </p>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      <div className="p-4 border-t border-gray-100 bg-white sticky bottom-0 flex space-x-3">
-        <button 
-          onClick={() => setIsEditing(true)}
-          className="flex-1 bg-orange-600 text-white font-bold py-4 rounded-2xl flex items-center justify-center space-x-2 shadow-lg shadow-orange-100 active:scale-[0.98] transition-all"
-        >
-          <span>Edit Profile</span>
+      <div className="flex bg-white border-b border-gray-100 sticky top-0 z-20">
+        <button onClick={() => setActiveTab('active')} className={`flex-1 py-5 text-[10px] font-black uppercase tracking-[0.15em] relative transition-all ${activeTab === 'active' ? 'text-[#FF733B]' : 'text-gray-400'}`}>
+          My Items ({myListings.length})
+          {activeTab === 'active' && <div className="absolute bottom-0 left-8 right-8 h-1 bg-[#FF733B] rounded-t-full"></div>}
         </button>
+        <button onClick={() => setActiveTab('favorites')} className={`flex-1 py-5 text-[10px] font-black uppercase tracking-[0.15em] relative transition-all ${activeTab === 'favorites' ? 'text-[#FF733B]' : 'text-gray-400'}`}>
+          Favorites ({favoriteListings.length})
+          {activeTab === 'favorites' && <div className="absolute bottom-0 left-8 right-8 h-1 bg-[#FF733B] rounded-t-full"></div>}
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 bg-gray-50/30 pb-32">
+        {loading ? (
+          <div className="flex justify-center py-20"><div className="w-8 h-8 border-4 border-[#FF733B] border-t-transparent rounded-full animate-spin"></div></div>
+        ) : (activeTab === 'active' ? myListings : favoriteListings).length > 0 ? (
+          <div className="grid grid-cols-2 gap-4">
+            {(activeTab === 'active' ? myListings : favoriteListings).map((item) => (
+              <div key={item.id} onClick={() => onSelectItem?.(item)} className="bg-white p-1.5 rounded-[1.75rem] border-2 border-[#F6F7F9] shadow-sm active:scale-[0.98] transition-all cursor-pointer hover:border-[#FF733B] hover:shadow-lg hover:shadow-orange-100/30 overflow-hidden">
+                <div className="relative aspect-[4/5] rounded-[1.5rem] overflow-hidden mb-2 bg-gray-50">
+                  <img src={getThumbnail(item.image_url)} className="w-full h-full object-cover transition-transform duration-700 hover:scale-105" alt={item.title} />
+                </div>
+                <div className="flex flex-col space-y-1 px-2 pb-2 h-20 justify-between">
+                  <div>
+                    <span className="text-[7px] font-black text-orange-400 uppercase tracking-[0.15em] block h-3 truncate leading-none">
+                      {item.brand || item.category}
+                    </span>
+                    <h3 className="font-black text-[#1A1A1A] text-[11px] tracking-tight line-clamp-2 leading-tight min-h-[1.75rem] uppercase">
+                      {item.title}
+                    </h3>
+                  </div>
+                  <div className="flex justify-between items-baseline pt-1">
+                    <p className="text-[#FF733B] font-black text-xs tracking-tighter">${Number(item.price).toFixed(2)}</p>
+                    <span className="text-[7px] font-bold text-[#B0B0B0] uppercase tracking-wider text-right truncate flex-1 ml-2">
+                      {item.location}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 text-center px-10 border-2 border-dashed border-gray-100 rounded-[3rem] mx-4 my-8">
+            <p className="text-[10px] font-black text-gray-300 uppercase tracking-[0.2em] leading-relaxed">No Results</p>
+          </div>
+        )}
+      </div>
+
+      <div className="p-4 border-t border-gray-100 bg-white sticky bottom-0 flex space-x-3 z-30 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
+        <button onClick={() => setIsEditing(true)} className="flex-1 border-2 border-[#FF733B] text-[#FF733B] font-black py-4 rounded-2xl text-[10px] uppercase tracking-[0.2em] active:scale-95 transition-all">Edit Identity</button>
+        <button onClick={onGoHome} className="flex-1 bg-[#FF733B] text-white font-black py-4 rounded-2xl text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-orange-100 active:scale-95 transition-all">Marketplace</button>
       </div>
     </div>
   );
